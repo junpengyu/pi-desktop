@@ -1,11 +1,13 @@
 // Copy the built Pi runtime and redistribution notices without user configuration.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { verifyEngine } from "./engine.mjs";
 
 const [resourcesArg, piRootArg, nodeArg] = process.argv.slice(2);
 if (!resourcesArg || !piRootArg || !nodeArg) throw new Error("Expected resources directory, Pi checkout, and Node executable");
 const resources = resolve(resourcesArg);
 const piRoot = resolve(piRootArg);
+const engine = verifyEngine(piRoot);
 const source = join(piRoot, "packages/coding-agent");
 const target = join(resources, "pi/packages/coding-agent");
 const notices = join(resources, "licenses");
@@ -20,6 +22,7 @@ for (const dependency of ["jiti", "quickjs-wasi", "@silvia-odwyer/photon-node"])
 	cpSync(join(piRoot, "node_modules", dependency), join(target, "node_modules", dependency), { recursive: true, dereference: true });
 }
 cpSync(join(piRoot, "LICENSE"), join(notices, "Pi-LICENSE"));
+cpSync(join(piRoot, "PI_DESKTOP.md"), join(notices, "Pi-Desktop-Engine.md"));
 cpSync(join(dirname(dirname(realpathSync(nodeArg))), "LICENSE"), join(notices, "Node-LICENSE"));
 
 // Include notices from the build dependency tree as well: the CLI bundle strips legal comments.
@@ -55,5 +58,5 @@ function collectModules(directory) {
 }
 collectModules(join(piRoot, "node_modules"));
 writeFileSync(join(notices, "dependency-inventory.json"), JSON.stringify(inventory, null, 2) + "\n");
-writeFileSync(join(resources, "runtime-versions.json"), JSON.stringify({ node: process.version, pi: JSON.parse(readFileSync(join(source, "package.json"), "utf8")).version, architecture: process.arch }, null, 2) + "\n");
+writeFileSync(join(resources, "runtime-versions.json"), JSON.stringify({ node: process.version, pi: engine.piVersion, architecture: process.arch, engine }, null, 2) + "\n");
 console.log(`Packaged Pi runtime and ${inventory.length} dependency notices in ${basename(resources)}`);

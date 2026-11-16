@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/junpengyu/pi-desktop-engine.git",
+  "revision": "a1e0f3fedee6601f114d7b46027652be3a16e51d",
+  "piVersion": "1.4.0",
+  "upstream": {
+    "repository": "https://github.com/earendil-works/pi.git",
+    "revision": "f09d01b85e0384647fcab6779d35ab9dabe04be3"
+  }
+}

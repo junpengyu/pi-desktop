@@ -15,11 +15,9 @@ if [[ "$(uname -s)" != Darwin ]]; then
   printf '%s\n' 'The macOS app must be built on macOS.' >&2
   exit 1
 fi
-if [[ ! -f "$PI_SOURCE_DIR/packages/coding-agent/dist/bundle/cli.js" ]]; then
-  printf '%s\n' 'Build Pi first, or set PI_SOURCE_DIR to a built Pi checkout.' >&2
-  exit 1
-fi
 "$NODE_BIN" -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 22 || (major === 22 && minor < 19)) process.exit(1)'
+# Validate the pinned engine before replacing any existing application output.
+PI_SOURCE_DIR="$PI_SOURCE_DIR" "$NODE_BIN" "$SCRIPT_DIR/scripts/engine.mjs" verify
 
 # Rebuild only generated output, never user data or the source checkout.
 rm -rf "$APP_DIR"

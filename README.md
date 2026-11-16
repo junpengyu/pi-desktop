@@ -8,7 +8,7 @@
 
 Pi Desktop 是基于 [Pi Coding Agent](https://github.com/earendil-works/pi) 的本地桌面客户端，提供简洁的对话界面、工具执行过程和代码变更审阅能力。无需接入项目方托管的模型网关，也无需注册 Pi Desktop 账号。
 
-项目通过 Pi 的 RPC 协议连接模型与编码工具，使用 Node.js 提供本地服务，并通过 AppKit 和 WKWebView 封装 macOS 桌面窗口。
+项目通过 Pi 的 RPC 协议连接模型与编码工具，使用 Node.js 提供本地服务，并通过 AppKit 和 WKWebView 封装 macOS 桌面窗口。内核维护于 [Pi Desktop Engine](https://github.com/junpengyu/pi-desktop-engine)，保留上游历史与 MIT 许可；桌面构建通过 `engine.lock.json` 固定经过验证的提交。
 
 ## 隐私设计
 
@@ -16,6 +16,7 @@ Pi Desktop 是基于 [Pi Coding Agent](https://github.com/earendil-works/pi) 的
 - **不收集调用日志**：当前客户端未集成分析、遥测或崩溃上报 SDK，不向项目方上传提示词、回复、工具结果或模型调用日志。
 - **会话保存在本地**：认证、设置、会话记录和工作目录列表由本机保存，无内置云端同步。
 - **配置由你掌控**：使用自己的模型账号和服务地址。若配置了第三方代理或网关，请求将经过该服务，其日志策略需要单独确认。
+- **内核默认值**：定制内核默认关闭安装遥测和启动时的远程目录刷新。单独运行内核时可通过 `PI_TELEMETRY=1` 或 `PI_OFFLINE=0` 显式启用对应行为；`--offline` 优先于环境变量。桌面启动器始终设置关闭值。
 
 ### 数据边界
 
@@ -39,7 +40,7 @@ Pi 引擎、用户安装的扩展、MCP 服务及被调用的工具可能有各�
 
 ## 下载应用
 
-前往 **[GitHub Releases](https://github.com/junpengyu/pi-desktop/releases/latest)** 下载 `Pi-Desktop-1.0.2-macOS-arm64.zip`（Apple Silicon，M 系列芯片）。
+前往 **[GitHub Releases](https://github.com/junpengyu/pi-desktop/releases/latest)** 下载 `Pi-Desktop-1.0.3-macOS-arm64.zip`（Apple Silicon，M 系列芯片）。
 
 1. 解压 ZIP，将 `Pi Desktop.app` 拖入“应用程序”目录。
 2. 双击打开应用。当前未经过 Apple 开发者签名与公证；若 macOS 阻止打开，请在“系统设置 → 隐私与安全性”中按系统提示确认来源后打开。
@@ -64,36 +65,31 @@ Pi 引擎、用户安装的扩展、MCP 服务及被调用的工具可能有各�
 
 ## 快速开始
 
-### 1. 获取并构建 Pi
-
-推荐将 Pi 与本项目放在同一父目录下：
+### 1. 获取桌面项目并构建固定版本的内核
 
 ```bash
 mkdir pi-workspace
 cd pi-workspace
-
-git clone https://github.com/earendil-works/pi.git
-cd pi
-npm install --ignore-scripts
-npm run build
+git clone https://github.com/junpengyu/pi-desktop.git
+cd pi-desktop
+npm run engine:prepare
 ```
+
+`engine:prepare` 会将 [Pi Desktop Engine](https://github.com/junpengyu/pi-desktop-engine) 克隆到相邻的 `pi` 目录，检出 `engine.lock.json` 指定的提交，执行 `npm ci --ignore-scripts` 和构建，并记录构建来源。如果目标目录已存在，脚本要求其提交匹配且工作区干净，不会自动覆盖已有源码。需要保留其他 Pi 工作区时，可使用 `PI_SOURCE_DIR=/absolute/path/to/new-engine npm run engine:prepare`。
 
 通过构建后的 Pi CLI 配置模型与认证：
 
 ```bash
-node packages/coding-agent/dist/bundle/cli.js
+node ../pi/packages/coding-agent/dist/bundle/cli.js
 ```
 
 模型与认证的使用方法请参阅 [Pi 官方文档](https://github.com/earendil-works/pi#readme)。
 
-### 2. 获取并启动 Pi Desktop
+### 2. 启动 Pi Desktop
 
-从 `pi` 目录返回父目录，然后获取本项目：
+在 `pi-desktop` 目录运行：
 
 ```bash
-cd ..
-git clone https://github.com/junpengyu/pi-desktop.git
-cd pi-desktop
 npm start
 ```
 
@@ -130,7 +126,7 @@ npm run build:app
 npm run open:app
 ```
 
-生成的 `Pi Desktop.app` 位于项目根目录，已包含运行依赖，可以移至“应用程序”目录。构建前需要准备好 Pi 构建输出；非默认目录可通过 `PI_SOURCE_DIR` 指定。构建脚本也会复制 Node.js、Pi 和依赖的许可声明。
+生成的 `Pi Desktop.app` 位于项目根目录，已包含运行依赖，可以移至“应用程序”目录。构建前须运行 `engine:prepare`；非默认目录可通过 `PI_SOURCE_DIR` 指定。构建脚本会验证内核提交、干净的源码状态、依赖锁摘要及 CLI 构建摘要，并复制 Node.js、Pi 和依赖的许可声明。应用内 `Contents/Resources/runtime-versions.json` 记录内核仓库、提交、上游基线和构建信息，便于追溯；这不保证不同机器的构建产物逐字节一致。
 
 生成用于分发的 ZIP 和 SHA-256 校验文件：
 
@@ -191,6 +187,8 @@ npm run build:release
 | 命令 | 说明 |
 | --- | --- |
 | `npm start` | 启动本地 HTTP 服务 |
+| `npm run engine:prepare` | 获取并构建固定提交的内核 |
+| `npm run engine:verify` | 校验内核源码与构建记录 |
 | `npm run build:app` | 编译 macOS 启动器并生成应用包 |
 | `npm run open:app` | 打开已生成的 macOS 应用 |
 
@@ -253,4 +251,4 @@ npm run build:app
 
 本项目采用 [MIT 许可证](LICENSE)，允许自由使用、修改、商用与再分发，保留版权和许可声明即可。
 
-Pi 引擎由 [earendil-works/pi](https://github.com/earendil-works/pi) 维护，本仓库不包含其源码；Pi 的使用与分发遵循上游许可。
+Pi 引擎上游为 [earendil-works/pi](https://github.com/earendil-works/pi)，原作者版权与 MIT 许可保持不变。下游内核源码单独维护于 [pi-desktop-engine](https://github.com/junpengyu/pi-desktop-engine) 的 `desktop-engine` 分支；维护策略与隐私默认值见 [PI_DESKTOP.md](https://github.com/junpengyu/pi-desktop-engine/blob/desktop-engine/PI_DESKTOP.md)。本桌面仓库记录固定提交，分发包包含引擎及其许可声明。
