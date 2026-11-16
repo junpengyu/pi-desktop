@@ -1304,8 +1304,23 @@ function bindEvents() {
 
 	els.sendPromptBtn.onclick = submitPrompt;
 
+	// IME (Pinyin etc.) guard. WebKit fires compositionend BEFORE the Enter
+	// keydown that commits the composition, and composition keydowns can arrive
+	// with isComposing=false / keyCode=229. Track composition state ourselves
+	// and clear it one tick late so the committing Enter is never treated as
+	// a send.
+	let imeComposing = false;
+	els.promptInput.addEventListener("compositionstart", () => {
+		imeComposing = true;
+	});
+	els.promptInput.addEventListener("compositionend", () => {
+		setTimeout(() => {
+			imeComposing = false;
+		}, 0);
+	});
 	els.promptInput.addEventListener("keydown", (e) => {
-		if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+		const imeActive = imeComposing || e.isComposing || e.keyCode === 229;
+		if (e.key === "Enter" && !e.shiftKey && !imeActive) {
 			e.preventDefault();
 			submitPrompt();
 		} else if (e.key === "Escape") {
@@ -1367,8 +1382,18 @@ function bindEvents() {
 	};
 
 	els.runBashBtn.onclick = executeDirectBash;
+	let bashImeComposing = false;
+	els.bashCommandInput.addEventListener("compositionstart", () => {
+		bashImeComposing = true;
+	});
+	els.bashCommandInput.addEventListener("compositionend", () => {
+		setTimeout(() => {
+			bashImeComposing = false;
+		}, 0);
+	});
 	els.bashCommandInput.addEventListener("keydown", (e) => {
-		if (e.key === "Enter") executeDirectBash();
+		const imeActive = bashImeComposing || e.isComposing || e.keyCode === 229;
+		if (e.key === "Enter" && !imeActive) executeDirectBash();
 		if (e.key === "Escape") {
 			els.bashDrawer.classList.add("hidden");
 			els.bashOutputPre.classList.add("hidden");
