@@ -1,10 +1,31 @@
 import Cocoa
 import WebKit
 
+struct GitHubRelease: Decodable {
+    struct Asset: Decodable {
+        let name: String
+        let browserDownloadURL: String
+        enum CodingKeys: String, CodingKey {
+            case name
+            case browserDownloadURL = "browser_download_url"
+        }
+    }
+    let tagName: String
+    let assets: [Asset]
+    var version: String { tagName.hasPrefix("v") ? String(tagName.dropFirst()) : tagName }
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case assets
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate {
     var window: NSWindow!
     var webView: WKWebView!
     var backendProcess: Process?
+    var piNodePath: String?
+    var piCliPath: String?
+    var checkingForUpdates = false
     let port: Int = 4317
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -16,8 +37,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDe
 
     func startBackendIfNeeded() {
         let env = ProcessInfo.processInfo.environment
-        // The generated app bundle lives beside server.mjs in the checkout.
-        let defaultDesktopDir = Bundle.main.bundleURL.deletingLastPathComponent().path
+        let resourcesDir = Bundle.main.resourceURL!.path
+        let bundledDesktopDir = "\(resourcesDir)/desktop"
+        let isBundled = FileManager.default.fileExists(atPath: "\(bundledDesktopDir)/server.mjs")
+        let defaultDesktopDir = isBundled ? bundledDesktopDir : Bundle.main.bundleURL.deletingLastPathComponent().path
         let desktopDir = env["PI_DESKTOP_DIR"] ?? defaultDesktopDir
         let serverScript = "\(desktopDir)/server.mjs"
         let userHome = FileManager.default.homeDirectoryForCurrentUser.path
@@ -28,31 +51,54 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDe
             .map { "\(nvmVersions)/\($0)/bin/node" }
         let pathNodes = (env["PATH"] ?? "").split(separator: ":").map { "\($0)/node" }
         let nodeCandidates = [env["PI_NODE_BIN"]].compactMap { $0 }
+            + ["\(Bundle.main.bundleURL.path)/Contents/MacOS/node"]
             + nvmNodes + ["/opt/homebrew/bin/node", "/usr/local/bin/node"] + pathNodes
 
         guard let nodePath = nodeCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }),
               FileManager.default.fileExists(atPath: serverScript) else {
+            showStartupError("缺少 Node.js 或应用资源，请重新安装完整的 Pi Desktop 应用。")
             return
         }
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: nodePath)
         proc.arguments = [serverScript]
-        proc.currentDirectoryURL = URL(fileURLWithPath: desktopDir)
+        proc.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
 
         var procEnv = env
         let nodeBinDir = URL(fileURLWithPath: nodePath).deletingLastPathComponent().path
         let extraPaths = "\(nodeBinDir):\(userHome)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
         procEnv["PATH"] = "\(extraPaths):\(env["PATH"] ?? "")"
         procEnv["PI_DESKTOP_PORT"] = String(port)
+        procEnv["PI_DESKTOP_HOST"] = "127.0.0.1"
+        procEnv["PI_TELEMETRY"] = "0"
+        procEnv["PI_OFFLINE"] = "1"
+        if isBundled { procEnv["PI_DESKTOP_BUNDLED"] = "1" }
+        let bundledPi = "\(resourcesDir)/pi/packages/coding-agent/dist/bundle/cli.js"
+        if env["PI_CLI_PATH"] == nil && FileManager.default.fileExists(atPath: bundledPi) {
+            procEnv["PI_CLI_PATH"] = bundledPi
+            procEnv["PI_PACKAGE_DIR"] = "\(resourcesDir)/pi/packages/coding-agent"
+        }
         proc.environment = procEnv
+        self.piNodePath = nodePath
+        self.piCliPath = procEnv["PI_CLI_PATH"] ?? URL(fileURLWithPath: desktopDir)
+            .deletingLastPathComponent().appendingPathComponent("pi/packages/coding-agent/dist/bundle/cli.js").path
 
         do {
             try proc.run()
             self.backendProcess = proc
         } catch {
             NSLog("Failed to spawn Pi Desktop backend: \(error)")
+            showStartupError("无法启动本地服务：\(error.localizedDescription)")
         }
+    }
+
+    func showStartupError(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Pi Desktop 启动失败"
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 
     func setupMenu() {
@@ -65,6 +111,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDe
         appMenuItem.submenu = appMenu
         appMenu.addItem(withTitle: "About Pi Codex", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
+        appMenu.addItem(withTitle: "配置模型与登录…", action: #selector(configureModel), keyEquivalent: ",")
         appMenu.addItem(withTitle: "Reload Interface", action: #selector(reloadWebView), keyEquivalent: "r")
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -118,6 +166,77 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDe
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    @objc func checkForUpdates() {
+        guard !checkingForUpdates else { return }
+        checkingForUpdates = true
+        let url = URL(string: "https://api.github.com/repos/junpengyu/pi-desktop/releases/latest")!
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("Pi-Desktop-Update-Check", forHTTPHeaderField: "User-Agent")
+        // An ephemeral session sends no stored cookies or user/model data.
+        let session = URLSession(configuration: .ephemeral)
+        session.dataTask(with: request) { [weak self] data, response, error in
+            defer { session.finishTasksAndInvalidate() }
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.checkingForUpdates = false
+                let alert = NSAlert()
+                let code = (response as? HTTPURLResponse)?.statusCode
+                guard error == nil, code == 200, let data = data,
+                      let release = try? JSONDecoder().decode(GitHubRelease.self, from: data),
+                      release.version.range(of: "^[0-9]+\\.[0-9]+\\.[0-9]+$", options: .regularExpression) != nil else {
+                    alert.messageText = "暂时无法检查更新"
+                    alert.informativeText = code == 403 || code == 429
+                        ? "GitHub 请求额度受限，请稍后重试，或直接查看发布页面。"
+                        : "无法获取最新版本，请检查网络连接，或直接查看发布页面。"
+                    alert.addButton(withTitle: "打开发布页面")
+                    alert.addButton(withTitle: "取消")
+                    if alert.runModal() == .alertFirstButtonReturn {
+                        NSWorkspace.shared.open(URL(string: "https://github.com/junpengyu/pi-desktop/releases")!)
+                    }
+                    return
+                }
+                let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+                if release.version.compare(current, options: .numeric) != .orderedDescending {
+                    alert.messageText = "已是最新版本"
+                    alert.informativeText = "当前版本：\(current)"
+                    alert.addButton(withTitle: "好")
+                    alert.runModal()
+                    return
+                }
+                #if arch(arm64)
+                let architecture = "arm64"
+                #else
+                let architecture = "x64"
+                #endif
+                let filename = "Pi-Desktop-\(release.version)-macOS-\(architecture).zip"
+                let asset = release.assets.first { $0.name == filename }
+                let expectedPrefix = "https://github.com/junpengyu/pi-desktop/releases/download/"
+                let downloadURL = asset.flatMap { $0.browserDownloadURL.hasPrefix(expectedPrefix) ? URL(string: $0.browserDownloadURL) : nil }
+                alert.messageText = "发现新版本 \(release.version)"
+                alert.informativeText = "当前版本：\(current)\n\n下载并解压后，退出应用，将新版 Pi Desktop.app 替换到“应用程序”目录。会话与认证仍保存在用户目录中。"
+                alert.addButton(withTitle: downloadURL == nil ? "查看发布页面" : "下载更新")
+                alert.addButton(withTitle: "稍后")
+                if alert.runModal() == .alertFirstButtonReturn {
+                    NSWorkspace.shared.open(downloadURL ?? URL(string: "https://github.com/junpengyu/pi-desktop/releases/latest")!)
+                }
+            }
+        }.resume()
+    }
+
+    @objc func configureModel() {
+        guard let node = piNodePath, let cli = piCliPath else { return }
+        let quote: (String) -> String = { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+        let command = "cd " + quote(FileManager.default.homeDirectoryForCurrentUser.path)
+            + " && PI_TELEMETRY=0 PI_OFFLINE=1 " + quote(node) + " " + quote(cli)
+        let escaped = command.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "tell application \"Terminal\"\nactivate\ndo script \"\(escaped)\"\nend tell"
+        var error: NSDictionary?
+        NSAppleScript(source: script)?.executeAndReturnError(&error)
+        if error != nil { showStartupError("无法打开模型配置终端，请检查系统的自动化权限。") }
+    }
+
     @objc func reloadWebView() {
         webView.reload()
     }
@@ -135,6 +254,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDe
             } else if retries > 0 {
                 DispatchQueue.global().asyncAfter(deadline: .now() + 0.15) {
                     self.waitForServerAndLoad(retries: retries - 1)
+                }
+            } else {
+                DispatchQueue.main.async {
+                    self.showStartupError("本地服务未能启动，请检查 4317 端口是否被其他应用占用，然后重新打开应用。")
                 }
             }
         }

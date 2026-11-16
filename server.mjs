@@ -79,8 +79,10 @@ function loadWorkspaces() {
 		.filter((p) => typeof p === "string" && p && existsSync(p));
 
 	const defaultWorkspaces = [
-		resolve(__dirname, "..", "pi"),
-		resolve(__dirname, ".."),
+		...(process.env.PI_DESKTOP_BUNDLED === "1" ? [homedir()] : [
+			resolve(__dirname, "..", "pi"),
+			resolve(__dirname, ".."),
+		]),
 		...sessionCwds,
 	].filter((p) => existsSync(p));
 

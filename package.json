@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node server.mjs",
     "build:app": "bash build-macos-app.sh",
+    "build:release": "bash build-macos-app.sh --release",
     "open:app": "open \"./Pi Desktop.app\""
   }
 }
