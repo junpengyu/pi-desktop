@@ -39,7 +39,7 @@ Pi 引擎、用户安装的扩展、MCP 服务及被调用的工具可能有各�
 
 ## 下载应用
 
-前往 **[GitHub Releases](https://github.com/junpengyu/pi-desktop/releases/latest)** 下载 `Pi-Desktop-1.0.1-macOS-arm64.zip`（Apple Silicon，M 系列芯片）。
+前往 **[GitHub Releases](https://github.com/junpengyu/pi-desktop/releases/latest)** 下载 `Pi-Desktop-1.0.2-macOS-arm64.zip`（Apple Silicon，M 系列芯片）。
 
 1. 解压 ZIP，将 `Pi Desktop.app` 拖入“应用程序”目录。
 2. 双击打开应用。当前未经过 Apple 开发者签名与公证；若 macOS 阻止打开，请在“系统设置 → 隐私与安全性”中按系统提示确认来源后打开。
@@ -142,7 +142,7 @@ npm run build:release
 
 ## 更新应用
 
-在 macOS 顶部应用菜单中选择 **“检查更新…”**。应用按需读取本仓库最新的 GitHub Release，比对版本，并提供与当前芯片架构匹配的下载入口。通过官方发布页面的跳转地址读取版本，不依赖 GitHub API 或 Token，避免匿名 API 请求额度限制。若网络连接失败，会显示具体原因并提供发布页面入口。
+在 macOS 顶部 **Help（帮助）→ 检查更新…** 中手动检查。应用按需读取本仓库最新的 GitHub Release，比对版本，并提供与当前芯片架构匹配的下载入口。通过官方发布页面的跳转地址读取版本，不依赖 GitHub API 或 Token，避免匿名 API 请求额度限制。若网络连接失败，会显示具体原因并提供发布页面入口。
 
 下载后解压，退出 Pi Desktop，将新版 `.app` 替换到“应用程序”目录，再重新打开。认证和会话保存在用户目录中，不随应用替换而删除。
 
