@@ -470,6 +470,12 @@ html, body {
   line-height: 1.55;
 }
 
+/* Queued steering message: accepted by the engine, not yet delivered to the model */
+.msg-user.queued {
+  opacity: 0.55;
+  border: 1px dashed var(--border-strong);
+}
+
 /* Assistant Turn */
 .msg-assistant {
   display: flex;

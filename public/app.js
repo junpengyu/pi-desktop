@@ -26,6 +26,7 @@ const state = {
 	statusError: "",
 	runStatus: "",
 	pendingPrompt: null,
+	queuedInputs: [],
 	activeWorkers: [],
 };
 
@@ -212,12 +213,16 @@ function renderConnectionStatus() {
 	els.newThreadBtn.disabled = state.isConnecting || state.isSending;
 	els.rpcConnectionDot.classList.toggle("online", ready);
 	let label = "已就绪";
+	const queuedCount = state.queuedInputs.length;
 	if (state.isConnecting) label = "正在连接任务…";
 	else if (!state.eventsConnected) label = "连接中断，正在重连；输入已保留";
 	else if (state.statusError) label = state.statusError;
 	else if (state.isSending) label = "正在发送…";
-	else if (state.isRunning) label = state.runStatus || "正在等待模型回复…";
-	else if (!state.currentWorkerId) label = "任务未连接，请重新连接";
+	else if (state.isRunning) {
+		label = state.runStatus || "正在等待模型回复…";
+		if (queuedCount > 0) label += `（排队 ${queuedCount} 条）`;
+	} else if (!state.currentWorkerId) label = "任务未连接，请重新连接";
+	else if (queuedCount > 0) label = `已就绪 · ${queuedCount} 条消息排队中，下次运行时送达`;
 	els.composerStatus.textContent = label;
 	els.composerStatus.classList.toggle("error", Boolean(state.statusError));
 	els.reconnectBtn.classList.toggle("hidden", state.isConnecting || (!state.statusError && Boolean(state.currentWorkerId)));
@@ -283,16 +288,27 @@ function handleWorkerRpcEvent(workerId, event) {
 		case "agent_settled":
 			setStreamingUI(false);
 			state.streamingAssistant = null;
-			state.pendingPrompt = null;
-			refreshThreadSnapshot().catch(reportError);
+			settlePendingInputs();
 			refreshGitInspector().catch(reportError);
+			break;
+		case "queue_update":
+			state.queuedInputs = [...(event.steering || []), ...(event.followUp || [])];
+			if (state.pendingPrompt && state.queuedInputs.includes(state.pendingPrompt.content)) {
+				state.pendingPrompt = null;
+			}
+			renderConnectionStatus();
+			renderTimeline(true);
 			break;
 		case "message_start": {
 			const msg = event.message;
 			if (!msg) break;
 			if (msg.role === "user") {
-				state.pendingPrompt = null;
+				const text = userMessageText(msg);
+				if (state.pendingPrompt && state.pendingPrompt.content === text) state.pendingPrompt = null;
+				const queuedIndex = state.queuedInputs.indexOf(text);
+				if (queuedIndex !== -1) state.queuedInputs.splice(queuedIndex, 1);
 				state.messages.push(msg);
+				renderConnectionStatus();
 				renderTimeline(true);
 			} else if (msg.role === "assistant") {
 				state.streamingAssistant = {
@@ -619,6 +635,7 @@ async function connectThread({ workerId, cwd, sessionFile }) {
 	if (version !== state.connectionVersion) return;
 	state.isConnecting = false;
 	state.pendingPrompt = null;
+	state.queuedInputs = [];
 	state.currentWorkerId = data.workerId;
 	localStorage.setItem("pi-desktop-thread", JSON.stringify({ workerId: data.workerId, cwd: data.cwd, sessionFile: data.state?.sessionFile }));
 	state.currentWorkspace = data.cwd;
@@ -680,6 +697,7 @@ async function refreshThreadSnapshot() {
 	}
 	if (messagesRes?.data?.messages) {
 		state.messages = messagesRes.data.messages;
+		reconcileDeliveredInputs();
 		for (const msg of state.messages) {
 			if (msg.role === "toolResult" && msg.toolCallId) {
 				const existing = state.toolExecutions.get(msg.toolCallId) || {};
@@ -949,6 +967,54 @@ function renderAssistantTurn(msg, isLive = false) {
 	return wrapper;
 }
 
+function userMessageText(msg) {
+	if (typeof msg.content === "string") return msg.content;
+	return (msg.content || [])
+		.filter((c) => c?.type === "text")
+		.map((c) => c.text)
+		.join("\n");
+}
+
+// Drop queued/pending entries whose text is already in the transcript, mirroring
+// how the engine drains its steer queue when a message is delivered.
+function reconcileDeliveredInputs() {
+	const delivered = new Set(state.messages.filter((m) => m.role === "user").map(userMessageText));
+	state.queuedInputs = state.queuedInputs.filter((text) => !delivered.has(text));
+	if (state.pendingPrompt && delivered.has(state.pendingPrompt.content)) state.pendingPrompt = null;
+}
+
+// After a run settles, decide what happened to messages the user sent mid-run.
+// Kept if the engine still queues them (pendingMessageCount); restored to the
+// composer if the engine settled without delivering them, so input is never lost.
+async function settlePendingInputs() {
+	const workerId = state.currentWorkerId;
+	const version = state.connectionVersion;
+	try {
+		await refreshThreadSnapshot();
+	} catch (error) {
+		if (workerId === state.currentWorkerId && version === state.connectionVersion) reportError(error);
+		return;
+	}
+	if (workerId !== state.currentWorkerId || version !== state.connectionVersion) return;
+	reconcileDeliveredInputs();
+	if ((state.sessionState?.pendingMessageCount || 0) > 0) {
+		renderConnectionStatus();
+		renderTimeline(false);
+		return;
+	}
+	const lost = [];
+	if (state.pendingPrompt) lost.push(state.pendingPrompt.content);
+	lost.push(...state.queuedInputs);
+	if (lost.length === 0) return;
+	state.pendingPrompt = null;
+	state.queuedInputs = [];
+	const draft = els.promptInput.value.trim();
+	els.promptInput.value = draft ? `${lost.join("\n")}\n${draft}` : lost.join("\n");
+	reportError(new Error("任务已结束，部分消息未送达，已放回输入框"));
+	renderTimeline(false);
+	renderConnectionStatus();
+}
+
 function renderTimeline(scrollToBottom = false) {
 	els.timelineInner.innerHTML = "";
 
@@ -956,6 +1022,7 @@ function renderTimeline(scrollToBottom = false) {
 		(m) => m.role === "user" || m.role === "assistant",
 	);
 	if (state.pendingPrompt) visibleMessages.push(state.pendingPrompt);
+	for (const text of state.queuedInputs) visibleMessages.push({ role: "user", content: text, queued: true });
 
 	if (visibleMessages.length === 0 && !state.streamingAssistant) {
 		const hero = document.createElement("div");
@@ -982,7 +1049,7 @@ function renderTimeline(scrollToBottom = false) {
 	for (const msg of visibleMessages) {
 		if (msg.role === "user") {
 			const u = document.createElement("div");
-			u.className = "msg-user";
+			u.className = msg.queued ? "msg-user queued" : "msg-user";
 			u.textContent =
 				typeof msg.content === "string"
 					? msg.content
@@ -1113,6 +1180,10 @@ async function submitPrompt() {
 		showToast("连接尚未就绪，输入已保留，请稍候或重新连接", 5000);
 		return;
 	}
+	if (state.pendingPrompt?.content === text || state.queuedInputs.includes(text)) {
+		showToast("相同内容已在发送队列中", 4000);
+		return;
+	}
 	const workerId = state.currentWorkerId;
 	const wasRunning = state.isRunning;
 	state.isSending = true;
@@ -1122,11 +1193,18 @@ async function submitPrompt() {
 	renderTimeline(true);
 	els.autocompletePopover.classList.add("hidden");
 	try {
-		const res = await sendRpc({ type: "prompt", message: text,
+		let steered = wasRunning;
+		let res = await sendRpc({ type: "prompt", message: text,
 			...(wasRunning ? { streamingBehavior: "steer" } : {}) });
+		if (!res?.success && !wasRunning && /already processing|streamingBehavior/i.test(res?.error || "")) {
+			// The UI thought the agent was idle but the engine is still streaming (for example
+			// after an event-stream gap). Retry as a steering message instead of failing.
+			steered = true;
+			res = await sendRpc({ type: "prompt", message: text, streamingBehavior: "steer" });
+		}
 		if (!res?.success) throw new Error(res?.error || "发送失败");
 		if (els.promptInput.value === draft) els.promptInput.value = "";
-		if (workerId === state.currentWorkerId && wasRunning) showToast("消息已加入当前任务");
+		if (workerId === state.currentWorkerId && steered) showToast("消息已加入当前任务");
 	} catch (error) {
 		if (workerId === state.currentWorkerId) {
 			state.pendingPrompt = null;
