@@ -40,7 +40,7 @@ Pi 引擎、用户安装的扩展、MCP 服务及被调用的工具可能有各�
 
 ## 下载应用
 
-前往 **[GitHub Releases](https://github.com/junpengyu/pi-desktop/releases/latest)** 下载 `Pi-Desktop-1.0.5-macOS-arm64.zip`（Apple Silicon，M 系列芯片）。
+前往 **[GitHub Releases](https://github.com/junpengyu/pi-desktop/releases/latest)** 下载 `Pi-Desktop-1.0.6-macOS-arm64.zip`（Apple Silicon，M 系列芯片）。
 
 1. 解压 ZIP，将 `Pi Desktop.app` 拖入“应用程序”目录。
 2. 双击打开应用。当前未经过 Apple 开发者签名与公证；若 macOS 阻止打开，请在“系统设置 → 隐私与安全性”中按系统提示确认来源后打开。
