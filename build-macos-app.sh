@@ -30,12 +30,7 @@ cp -R "$SCRIPT_DIR/public" "$RESOURCES_DIR/desktop/public"
 cp "$SCRIPT_DIR/LICENSE" "$RESOURCES_DIR/licenses/Pi-Desktop-LICENSE"
 "$NODE_BIN" "$SCRIPT_DIR/scripts/package-runtime.mjs" "$RESOURCES_DIR" "$PI_SOURCE_DIR" "$NODE_BIN"
 ICONSET_DIR="$(mktemp -d)/PiDesktop.iconset"
-mkdir -p "$ICONSET_DIR"
-for size in 16 32 128 256 512; do
-  sips -z "$size" "$size" "$SCRIPT_DIR/assets/icon.png" --out "$ICONSET_DIR/icon_${size}x${size}.png" >/dev/null
-  double_size=$((size * 2))
-  sips -z "$double_size" "$double_size" "$SCRIPT_DIR/assets/icon.png" --out "$ICONSET_DIR/icon_${size}x${size}@2x.png" >/dev/null
-done
+swift "$SCRIPT_DIR/scripts/generate-icon.swift" "$SCRIPT_DIR/assets/icon.png" "$ICONSET_DIR"
 iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/PiDesktop.icns"
 rm -r "${ICONSET_DIR%/PiDesktop.iconset}"
 

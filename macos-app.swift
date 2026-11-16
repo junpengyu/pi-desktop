@@ -1,24 +1,6 @@
 import Cocoa
 import WebKit
 
-struct GitHubRelease: Decodable {
-    struct Asset: Decodable {
-        let name: String
-        let browserDownloadURL: String
-        enum CodingKeys: String, CodingKey {
-            case name
-            case browserDownloadURL = "browser_download_url"
-        }
-    }
-    let tagName: String
-    let assets: [Asset]
-    var version: String { tagName.hasPrefix("v") ? String(tagName.dropFirst()) : tagName }
-    enum CodingKeys: String, CodingKey {
-        case tagName = "tag_name"
-        case assets
-    }
-}
-
 class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate {
     var window: NSWindow!
     var webView: WKWebView!
@@ -111,9 +93,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDe
         appMenuItem.submenu = appMenu
         appMenu.addItem(withTitle: "About Pi Codex", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
-        appMenu.addItem(withTitle: "配置模型与登录…", action: #selector(configureModel), keyEquivalent: ",")
-        appMenu.addItem(withTitle: "Reload Interface", action: #selector(reloadWebView), keyEquivalent: "r")
+        appMenu.addItem(withTitle: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "").target = self
+        appMenu.addItem(withTitle: "配置模型与登录…", action: #selector(configureModel), keyEquivalent: ",").target = self
+        appMenu.addItem(withTitle: "Reload Interface", action: #selector(reloadWebView), keyEquivalent: "r").target = self
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
@@ -169,26 +151,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDe
     @objc func checkForUpdates() {
         guard !checkingForUpdates else { return }
         checkingForUpdates = true
-        let url = URL(string: "https://api.github.com/repos/junpengyu/pi-desktop/releases/latest")!
+        let url = URL(string: "https://github.com/junpengyu/pi-desktop/releases/latest")!
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.httpMethod = "HEAD"
         request.setValue("Pi-Desktop-Update-Check", forHTTPHeaderField: "User-Agent")
         // An ephemeral session sends no stored cookies or user/model data.
         let session = URLSession(configuration: .ephemeral)
-        session.dataTask(with: request) { [weak self] data, response, error in
+        session.dataTask(with: request) { [weak self] _, response, error in
             defer { session.finishTasksAndInvalidate() }
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.checkingForUpdates = false
                 let alert = NSAlert()
                 let code = (response as? HTTPURLResponse)?.statusCode
-                guard error == nil, code == 200, let data = data,
-                      let release = try? JSONDecoder().decode(GitHubRelease.self, from: data),
-                      release.version.range(of: "^[0-9]+\\.[0-9]+\\.[0-9]+$", options: .regularExpression) != nil else {
+                let finalURL = response?.url
+                let tag = finalURL?.lastPathComponent ?? ""
+                let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+                guard error == nil, code == 200, finalURL?.scheme == "https", finalURL?.host == "github.com",
+                      finalURL?.path == "/junpengyu/pi-desktop/releases/tag/\(tag)",
+                      version.range(of: "^[0-9]+[.][0-9]+[.][0-9]+$", options: .regularExpression) != nil else {
                     alert.messageText = "暂时无法检查更新"
-                    alert.informativeText = code == 403 || code == 429
-                        ? "GitHub 请求额度受限，请稍后重试，或直接查看发布页面。"
-                        : "无法获取最新版本，请检查网络连接，或直接查看发布页面。"
+                    if let error = error {
+                        alert.informativeText = "无法连接 GitHub：\(error.localizedDescription)\n请检查网络或系统代理，也可以直接查看发布页面。"
+                    } else {
+                        alert.informativeText = "GitHub 发布页面未返回有效版本（HTTP \(code ?? 0)）。请稍后重试或直接查看发布页面。"
+                    }
                     alert.addButton(withTitle: "打开发布页面")
                     alert.addButton(withTitle: "取消")
                     if alert.runModal() == .alertFirstButtonReturn {
@@ -197,7 +184,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDe
                     return
                 }
                 let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
-                if release.version.compare(current, options: .numeric) != .orderedDescending {
+                if version.compare(current, options: .numeric) != .orderedDescending {
                     alert.messageText = "已是最新版本"
                     alert.informativeText = "当前版本：\(current)"
                     alert.addButton(withTitle: "好")
@@ -209,11 +196,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDe
                 #else
                 let architecture = "x64"
                 #endif
-                let filename = "Pi-Desktop-\(release.version)-macOS-\(architecture).zip"
-                let asset = release.assets.first { $0.name == filename }
-                let expectedPrefix = "https://github.com/junpengyu/pi-desktop/releases/download/"
-                let downloadURL = asset.flatMap { $0.browserDownloadURL.hasPrefix(expectedPrefix) ? URL(string: $0.browserDownloadURL) : nil }
-                alert.messageText = "发现新版本 \(release.version)"
+                let filename = "Pi-Desktop-\(version)-macOS-\(architecture).zip"
+                let downloadURL = URL(string: "https://github.com/junpengyu/pi-desktop/releases/download/\(tag)/\(filename)")
+                alert.messageText = "发现新版本 \(version)"
                 alert.informativeText = "当前版本：\(current)\n\n下载并解压后，退出应用，将新版 Pi Desktop.app 替换到“应用程序”目录。会话与认证仍保存在用户目录中。"
                 alert.addButton(withTitle: downloadURL == nil ? "查看发布页面" : "下载更新")
                 alert.addButton(withTitle: "稍后")
