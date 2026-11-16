@@ -63,6 +63,7 @@ const els = {
 	autocompletePopover: document.getElementById("autocompletePopover"),
 	bashDrawer: document.getElementById("bashDrawer"),
 	bashCommandInput: document.getElementById("bashCommandInput"),
+	bashOutputPre: document.getElementById("bashOutputPre"),
 	runBashBtn: document.getElementById("runBashBtn"),
 
 	promptInput: document.getElementById("promptInput"),
@@ -1015,11 +1016,27 @@ async function settlePendingInputs() {
 	renderConnectionStatus();
 }
 
+function renderBashExecution(msg) {
+	const wrap = document.createElement("div");
+	wrap.className = "bash-exec-block";
+	const head = document.createElement("button");
+	head.type = "button";
+	head.className = "bash-exec-head";
+	head.textContent = `$ ${msg.command}${msg.exitCode ? ` · exit ${msg.exitCode}` : ""}${msg.truncated ? " · 截断" : ""}`;
+	const out = document.createElement("pre");
+	out.className = "bash-exec-out";
+	out.textContent = msg.output || "(no output)";
+	head.onclick = () => wrap.classList.toggle("collapsed");
+	wrap.appendChild(head);
+	wrap.appendChild(out);
+	return wrap;
+}
+
 function renderTimeline(scrollToBottom = false) {
 	els.timelineInner.innerHTML = "";
 
 	const visibleMessages = state.messages.filter(
-		(m) => m.role === "user" || m.role === "assistant",
+		(m) => m.role === "user" || m.role === "assistant" || m.role === "bashExecution",
 	);
 	if (state.pendingPrompt) visibleMessages.push(state.pendingPrompt);
 	for (const text of state.queuedInputs) visibleMessages.push({ role: "user", content: text, queued: true });
@@ -1060,6 +1077,8 @@ function renderTimeline(scrollToBottom = false) {
 			els.timelineInner.appendChild(u);
 		} else if (msg.role === "assistant") {
 			els.timelineInner.appendChild(renderAssistantTurn(msg, false));
+		} else if (msg.role === "bashExecution") {
+			els.timelineInner.appendChild(renderBashExecution(msg));
 		}
 	}
 
@@ -1310,9 +1329,11 @@ function bindEvents() {
 	});
 
 	els.toggleBashBtn.onclick = () => {
-		els.bashDrawer.classList.toggle("hidden");
+		const show = els.bashDrawer.classList.toggle("hidden");
 		if (!els.bashDrawer.classList.contains("hidden")) {
 			els.bashCommandInput.focus();
+		} else {
+			els.bashOutputPre.classList.add("hidden");
 		}
 	};
 
@@ -1320,22 +1341,38 @@ function bindEvents() {
 		const command = els.bashCommandInput.value.trim();
 		if (!command) return;
 		els.bashCommandInput.value = "";
-		els.bashDrawer.classList.add("hidden");
-		showToast(`$ ${command}`);
-		const res = await sendRpc({ type: "bash", command });
+		els.bashOutputPre.classList.remove("hidden");
+		els.bashOutputPre.textContent = `$ ${command}\n…`;
+		els.runBashBtn.disabled = true;
+		let res;
+		try {
+			res = await sendRpc({ type: "bash", command });
+		} catch (error) {
+			res = { success: false, error: error?.message || String(error) };
+		} finally {
+			els.runBashBtn.disabled = false;
+		}
 		if (res?.success) {
-			showToast("Command output added to context");
+			const r = res.data || {};
+			const parts = [`$ ${command}`, r.output || "(no output)"];
+			if (r.exitCode) parts.push(`[exit ${r.exitCode}]`);
+			if (r.truncated) parts.push("[输出过长已截断，完整输出已加入任务上下文]");
+			els.bashOutputPre.textContent = parts.join("\n");
 			refreshThreadSnapshot();
 			refreshGitInspector();
 		} else {
-			showToast(`Failed: ${res?.error || "error"}`);
+			els.bashOutputPre.textContent = `$ ${command}\n执行失败: ${res?.error || "error"}`;
 		}
+		els.bashCommandInput.focus();
 	};
 
 	els.runBashBtn.onclick = executeDirectBash;
 	els.bashCommandInput.addEventListener("keydown", (e) => {
 		if (e.key === "Enter") executeDirectBash();
-		if (e.key === "Escape") els.bashDrawer.classList.add("hidden");
+		if (e.key === "Escape") {
+			els.bashDrawer.classList.add("hidden");
+			els.bashOutputPre.classList.add("hidden");
+		}
 	});
 
 	els.abortBtn.onclick = async () => {
