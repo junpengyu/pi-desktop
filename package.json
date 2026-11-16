@@ -1,0 +1,13 @@
+{
+  "name": "pi-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "WorkBuddy / Codex style desktop GUI for Pi Coding Agent (RPC mode)",
+  "scripts": {
+    "start": "node server.mjs",
+    "build:app": "bash build-macos-app.sh",
+    "open:app": "open \"./Pi Desktop.app\""
+  }
+}

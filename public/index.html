@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Codex · Pi</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="codex-app">
+    <!-- Left Sidebar (Codex Task Sidebar) -->
+    <aside class="codex-sidebar" id="leftSidebar">
+      <div class="sidebar-traffic-bar">
+        <div class="traffic-spacer"></div>
+        <div class="sidebar-top-actions">
+          <button class="icon-btn" id="themeToggleBtn" title="切换深色 / 浅色外观">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <circle cx="12" cy="12" r="4"/>
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="newThreadBtn" title="新建任务 (⌘N)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M12 20h9"/>
+              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-section-header">
+          <span>Tasks</span>
+        </div>
+        <div class="task-list" id="threadList"></div>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="dropdown-anchor full-width" id="workspaceDropdownWrap">
+          <button type="button" class="env-picker-btn" id="workspacePickerBtn" title="切换或添加本地代码库" aria-expanded="false" aria-controls="workspaceDropdownMenu">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="muted-icon">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+            <span class="env-picker-label" id="workspacePickerLabel">pi</span>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" class="muted-icon">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <div class="solid-dropdown-menu workspace-menu hidden" id="workspaceDropdownMenu">
+            <div class="dropdown-options-list" id="workspaceOptionsList"></div>
+            <button type="button" class="dropdown-footer-action" id="addWorkspaceBtn">+ 添加本地文件夹...</button>
+          </div>
+        </div>
+        <div class="footer-meta-row">
+          <span class="status-dot online" id="rpcConnectionDot"></span>
+          <span id="sidebarStatsText" class="footer-meta-text">Ready</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Center Canvas -->
+    <main class="codex-main" id="mainCanvas">
+      <!-- Top Bar -->
+      <header class="codex-topbar">
+        <div class="topbar-left">
+          <button class="icon-btn" id="toggleSidebarBtn" title="收起/展开侧边栏">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <path d="M9 3v18"/>
+            </svg>
+          </button>
+          <span class="run-spinner hidden" id="threadRunIndicator"></span>
+          <input
+            type="text"
+            id="threadTitleInput"
+            class="task-title-input"
+            placeholder="New task"
+            title="回车保存任务名称"
+          />
+        </div>
+
+        <div class="topbar-right">
+          <button class="pill-action-btn" id="compactBtn" title="点击压缩上下文 (/compact)">
+            <span id="contextMeterLabel">0% context</span>
+          </button>
+
+          <button class="diff-toggle-btn" id="toggleInspectorBtn" title="审阅代码变更与文件">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+            <span id="diffSummaryBadge" class="diff-summary-badge">Diff</span>
+          </button>
+        </div>
+      </header>
+
+      <div id="extensionWidgetsBar" class="extension-widgets-bar hidden"></div>
+
+      <!-- Conversation / Task Stream -->
+      <div class="timeline-scroll" id="timelineScroll">
+        <div class="timeline-inner" id="timelineInner"></div>
+      </div>
+
+      <!-- Codex Signature Floating Composer -->
+      <footer class="composer-dock" id="composerDock">
+        <div class="composer-container">
+          <div class="composer-status-row">
+            <span id="composerStatus" role="status" aria-live="polite">正在连接任务…</span>
+            <button type="button" id="reconnectBtn" class="pill-action-btn hidden">重新连接</button>
+          </div>
+          <!-- Autocomplete Menu -->
+          <div class="autocomplete-popover hidden" id="autocompletePopover"></div>
+
+          <!-- Inline Terminal Command Bar -->
+          <div class="bash-drawer hidden" id="bashDrawer">
+            <span class="bash-prompt-char">$</span>
+            <input type="text" id="bashCommandInput" placeholder="Run shell command in workspace (Enter to run, Esc to close)..." />
+            <button class="pill-action-btn" id="runBashBtn">Run</button>
+          </div>
+
+          <!-- Main Codex Composer Pill Box -->
+          <div class="codex-composer-box">
+            <textarea
+              id="promptInput"
+              class="codex-textarea"
+              rows="2"
+              placeholder="Ask Codex to write code, fix bugs, or explain... (@ files, / skills)"
+            ></textarea>
+
+            <div class="codex-composer-footer">
+              <div class="composer-pills-left">
+                <!-- Repo Pill -->
+                <button class="composer-pill" id="repoQuickPill" title="点击切换或添加项目文件夹">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                  </svg>
+                  <span id="composerRepoLabel">pi</span>
+                </button>
+
+                <!-- Git Branch Pill -->
+                <div class="composer-pill static" id="composerBranchPill" title="当前 Git 分支">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <line x1="6" y1="3" x2="6" y2="15"/>
+                    <circle cx="18" cy="6" r="3"/>
+                    <circle cx="6" cy="18" r="3"/>
+                    <path d="M18 9a9 9 0 0 1-9 9"/>
+                  </svg>
+                  <span id="composerBranchLabel">main</span>
+                </div>
+
+                <!-- Model Select Pill (Solid Custom Dropdown) -->
+                <div class="dropdown-anchor" id="modelDropdownWrap">
+                  <button type="button" class="composer-pill solid-select-pill" id="modelPickerBtn" title="切换模型">
+                    <span id="modelPickerLabel">加载模型...</span>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                      <polyline points="6 9 12 15 18 9"/>
+                    </svg>
+                  </button>
+                  <div class="solid-dropdown-menu hidden" id="modelDropdownMenu">
+                    <div class="dropdown-search-wrap">
+                      <input type="text" id="modelSearchInput" class="dropdown-search-input" placeholder="搜索模型名称或提供商..." />
+                    </div>
+                    <div class="dropdown-options-list" id="modelOptionsList"></div>
+                  </div>
+                </div>
+
+                <!-- Reasoning Effort Pill (Solid Custom Dropdown) -->
+                <div class="dropdown-anchor" id="thinkingDropdownWrap">
+                  <button type="button" class="composer-pill solid-select-pill" id="thinkingPickerBtn" title="推理深度 (Reasoning Effort)">
+                    <span id="thinkingPickerLabel">medium</span>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                      <polyline points="6 9 12 15 18 9"/>
+                    </svg>
+                  </button>
+                  <div class="solid-dropdown-menu compact hidden" id="thinkingDropdownMenu">
+                    <div class="dropdown-options-list" id="thinkingOptionsList"></div>
+                  </div>
+                </div>
+
+                <!-- Terminal Command Trigger -->
+                <button class="composer-pill" id="toggleBashBtn" title="运行终端命令并加入上下文">
+                  <span>&gt;_</span>
+                </button>
+              </div>
+
+              <div class="composer-actions-right">
+                <button class="codex-stop-btn hidden" id="abortBtn" title="停止任务 (Esc)">
+                  <span class="stop-square"></span>
+                </button>
+                <button class="codex-send-btn" id="sendPromptBtn" title="发送 (Enter)" disabled>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="19" x2="12" y2="5"/>
+                    <polyline points="5 12 12 5 19 12"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </footer>
+    </main>
+
+    <!-- Right Diff & Code Review Split Pane (Codex Diff Drawer) -->
+    <aside class="codex-diff-pane hidden" id="inspectorPanel">
+      <div class="diff-pane-header">
+        <div class="diff-tabs">
+          <button class="diff-tab active" id="tabBtnChanges">Changes</button>
+          <button class="diff-tab" id="tabBtnFiles">Files</button>
+        </div>
+        <div class="diff-pane-actions">
+          <button class="icon-btn small" id="refreshGitBtn" title="刷新 Git 变更">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"/>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+          </button>
+          <button class="icon-btn small" id="closeInspectorBtn" title="关闭面板">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Changes View -->
+      <div class="diff-pane-body" id="tabPanelChanges">
+        <div class="changed-files-strip" id="changedFilesList"></div>
+        <div class="diff-code-scroll" id="diffViewer"></div>
+      </div>
+
+      <!-- Files View -->
+      <div class="diff-pane-body hidden" id="tabPanelFiles">
+        <div class="files-nav-bar">
+          <span id="currentDirBreadcrumb" class="breadcrumb-text">/</span>
+          <div style="display:flex;gap:8px;">
+            <button class="pill-action-btn hidden" id="insertFileMentionBtn">@ Mention</button>
+            <button class="pill-action-btn" id="upDirBtn">↑ Up</button>
+          </div>
+        </div>
+        <div class="changed-files-strip" id="fileTreeList"></div>
+        <pre class="diff-code-scroll code-preview"><code id="fileCodeContent">Select a file to inspect</code></pre>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Extension UI Modal -->
+  <div class="modal-backdrop hidden" id="extensionModalBackdrop">
+    <div class="modal-card">
+      <h3 id="extModalTitle">Confirm</h3>
+      <div class="modal-body" id="extModalBody"></div>
+      <div class="modal-footer" id="extModalFooter"></div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toastContainer"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
