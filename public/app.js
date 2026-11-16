@@ -27,6 +27,7 @@ const state = {
 	runStatus: "",
 	pendingPrompt: null,
 	queuedInputs: [],
+	expandedTraceSteps: new Map(),
 	activeWorkers: [],
 };
 
@@ -298,7 +299,7 @@ function handleWorkerRpcEvent(workerId, event) {
 				state.pendingPrompt = null;
 			}
 			renderConnectionStatus();
-			renderTimeline(true);
+			queueTimelineRender();
 			break;
 		case "message_start": {
 			const msg = event.message;
@@ -310,14 +311,14 @@ function handleWorkerRpcEvent(workerId, event) {
 				if (queuedIndex !== -1) state.queuedInputs.splice(queuedIndex, 1);
 				state.messages.push(msg);
 				renderConnectionStatus();
-				renderTimeline(true);
+				queueTimelineRender();
 			} else if (msg.role === "assistant") {
 				state.streamingAssistant = {
 					role: "assistant",
 					content: Array.isArray(msg.content) ? [...msg.content] : [],
 					model: msg.model || state.sessionState?.model?.id || "assistant",
 				};
-				renderTimeline(true);
+				queueTimelineRender();
 			}
 			break;
 		}
@@ -360,7 +361,7 @@ function handleWorkerRpcEvent(workerId, event) {
 					state.streamingAssistant.content[idx] = ame.toolCall;
 				}
 			}
-			renderTimeline(true);
+			queueTimelineRender();
 			break;
 		}
 		case "message_end": {
@@ -373,7 +374,7 @@ function handleWorkerRpcEvent(workerId, event) {
 			} else if (msg.role === "toolResult") {
 				state.messages.push(msg);
 			}
-			renderTimeline(true);
+			queueTimelineRender();
 			break;
 		}
 		case "tool_execution_start":
@@ -383,7 +384,7 @@ function handleWorkerRpcEvent(workerId, event) {
 				args: event.args,
 				status: "running",
 			});
-			renderTimeline(true);
+			queueTimelineRender();
 			break;
 		case "tool_execution_update": {
 			const prev = state.toolExecutions.get(event.toolCallId) || {
@@ -394,7 +395,7 @@ function handleWorkerRpcEvent(workerId, event) {
 			prev.partialResult = event.partialResult;
 			prev.status = "running";
 			state.toolExecutions.set(event.toolCallId, prev);
-			renderTimeline(true);
+			queueTimelineRender();
 			break;
 		}
 		case "tool_execution_end": {
@@ -407,7 +408,7 @@ function handleWorkerRpcEvent(workerId, event) {
 			prev.durationMs = event.durationMs;
 			prev.status = event.isError ? "error" : "done";
 			state.toolExecutions.set(event.toolCallId, prev);
-			renderTimeline(true);
+			queueTimelineRender();
 			if (["edit", "write", "bash"].includes(String(event.toolName).toLowerCase())) {
 				refreshGitInspector();
 			}
@@ -860,6 +861,7 @@ function extractResultText(resultObj) {
 function createThinkingStepElement(thinkingText, isLive) {
 	const step = document.createElement("div");
 	step.className = "trace-step";
+	const expandKey = `think:${thinkingText.slice(0, 80)}`;
 
 	const header = document.createElement("div");
 	header.className = "trace-step-header";
@@ -870,10 +872,16 @@ function createThinkingStepElement(thinkingText, isLive) {
 	`;
 
 	const body = document.createElement("div");
-	body.className = `trace-step-body${isLive ? "" : " hidden"}`;
+	const expanded = state.expandedTraceSteps.has(expandKey)
+		? state.expandedTraceSteps.get(expandKey)
+		: isLive;
+	body.className = `trace-step-body${expanded ? "" : " hidden"}`;
 	body.textContent = thinkingText;
 
-	header.onclick = () => body.classList.toggle("hidden");
+	header.onclick = () => {
+		const isOpen = !body.classList.toggle("hidden");
+		state.expandedTraceSteps.set(expandKey, isOpen);
+	};
 	step.append(header, body);
 	return step;
 }
@@ -919,8 +927,13 @@ function createToolStepElement(toolCall) {
 	const outputText = extractResultText(exec.result || exec.partialResult);
 	const argsText = JSON.stringify(toolCall.arguments || exec.args || {}, null, 2);
 	body.textContent = outputText ? `${outputText}` : argsText;
+	const expandKey = `tool:${toolCall.id || `${toolCall.name}:${target}`}`;
 
-	header.onclick = () => body.classList.toggle("hidden");
+	header.onclick = () => {
+		const isOpen = !body.classList.toggle("hidden");
+		state.expandedTraceSteps.set(expandKey, isOpen);
+	};
+	if (state.expandedTraceSteps.get(expandKey)) body.classList.remove("hidden");
 	step.append(header, body);
 	return step;
 }
@@ -1019,6 +1032,8 @@ async function settlePendingInputs() {
 function renderBashExecution(msg) {
 	const wrap = document.createElement("div");
 	wrap.className = "bash-exec-block";
+	const expandKey = `bash:${msg.command}#${msg.timestamp || ""}`;
+	if (state.expandedTraceSteps.get(expandKey) === false) wrap.classList.add("collapsed");
 	const head = document.createElement("button");
 	head.type = "button";
 	head.className = "bash-exec-head";
@@ -1026,13 +1041,37 @@ function renderBashExecution(msg) {
 	const out = document.createElement("pre");
 	out.className = "bash-exec-out";
 	out.textContent = msg.output || "(no output)";
-	head.onclick = () => wrap.classList.toggle("collapsed");
+	head.onclick = () => {
+		const isOpen = !wrap.classList.toggle("collapsed");
+		state.expandedTraceSteps.set(expandKey, isOpen);
+	};
 	wrap.appendChild(head);
 	wrap.appendChild(out);
 	return wrap;
 }
 
+// The timeline re-renders wholesale on streaming events. Only follow the
+// stream when the user is already at the bottom; otherwise keep their scroll
+// position so reading history during a run is not constantly yanked around.
+function isTimelinePinnedToBottom() {
+	const el = els.timelineScroll;
+	return el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+}
+
+// Coalesce streaming re-renders to one per animation frame.
+let timelineRenderQueued = false;
+function queueTimelineRender() {
+	if (timelineRenderQueued) return;
+	timelineRenderQueued = true;
+	requestAnimationFrame(() => {
+		timelineRenderQueued = false;
+		renderTimeline(true);
+	});
+}
+
 function renderTimeline(scrollToBottom = false) {
+	const pinned = isTimelinePinnedToBottom();
+	const prevScrollTop = els.timelineScroll.scrollTop;
 	els.timelineInner.innerHTML = "";
 
 	const visibleMessages = state.messages.filter(
@@ -1086,8 +1125,10 @@ function renderTimeline(scrollToBottom = false) {
 		els.timelineInner.appendChild(renderAssistantTurn(state.streamingAssistant, true));
 	}
 
-	if (scrollToBottom) {
+	if (scrollToBottom && pinned) {
 		els.timelineScroll.scrollTop = els.timelineScroll.scrollHeight;
+	} else {
+		els.timelineScroll.scrollTop = prevScrollTop;
 	}
 }
 
@@ -1209,6 +1250,8 @@ async function submitPrompt() {
 	state.statusError = "";
 	state.pendingPrompt = { role: "user", content: text };
 	renderConnectionStatus();
+	// Sending implies following the tail again, even if the user had scrolled up.
+	els.timelineScroll.scrollTop = els.timelineScroll.scrollHeight;
 	renderTimeline(true);
 	els.autocompletePopover.classList.add("hidden");
 	try {
